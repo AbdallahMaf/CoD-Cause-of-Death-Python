@@ -6,35 +6,29 @@ from typing import List, Dict, Any
 
 class DHIS2Translator:
     def __init__(self, base_url: str, username: str, password: str):
-        """
-        Initialise le traducteur DHIS2
-        
-        Args:
-            base_url: URL de l'instance DHIS2 (ex: "https://dhis2.example.org")
-            username: Nom d'utilisateur admin
-            password: Mot de passe
-        """
         self.base_url = base_url.rstrip('/')
         self.auth = (username, password)
         self.session = requests.Session()
         self.session.auth = self.auth
-        self.session.headers.update({'Content-Type': 'application/json'})
+        self.session.headers.update({
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        })
         
     def test_connection(self) -> bool:
-        """Teste la connexion à l'API DHIS2"""
         try:
-            response = self.session.get(f"{self.base_url}/api/system/info")
+            response = self.session.get(f"{self.base_url}/api/system/info", timeout=30)
             return response.status_code == 200
-        except:
+        except Exception as e:
+            print(f"Erreur de connexion: {e}")
             return False
     
     def get_indicators(self) -> List[Dict[str, Any]]:
-        """Récupère tous les indicateurs de DHIS2"""
         indicators = []
         url = f"{self.base_url}/api/indicators.json?paging=false&fields=id,name,shortName,displayName"
         
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, timeout=30)
             response.raise_for_status()
             data = response.json()
             indicators = data.get('indicators', [])
@@ -44,12 +38,11 @@ class DHIS2Translator:
         return indicators
     
     def get_program_indicators(self) -> List[Dict[str, Any]]:
-        """Récupère tous les indicateurs de programme de DHIS2"""
         program_indicators = []
         url = f"{self.base_url}/api/programIndicators.json?paging=false&fields=id,name,shortName,displayName"
         
         try:
-            response = self.session.get(url)
+            response = self.session.get(url, timeout=30)
             response.raise_for_status()
             data = response.json()
             program_indicators = data.get('programIndicators', [])
@@ -59,24 +52,11 @@ class DHIS2Translator:
         return program_indicators
     
     def translate_text(self, text: str, source_lang: str = 'en', target_lang: str = 'fr') -> str:
-        """
-        Traduit un texte en utilisant Google Translate
-        
-        Args:
-            text: Texte à traduire
-            source_lang: Langue source (défaut: 'en')
-            target_lang: Langue cible (défaut: 'fr')
-        
-        Returns:
-            Texte traduit
-        """
         if not text or not isinstance(text, str):
             return text
         
         try:
-            # Petite pause pour éviter de surcharger l'API de traduction
-            time.sleep(0.1)
-            
+            time.sleep(0.2)
             translated = GoogleTranslator(source=source_lang, target=target_lang).translate(text)
             return translated
         except Exception as e:
@@ -84,90 +64,72 @@ class DHIS2Translator:
             return text
     
     def update_indicator(self, indicator_id: str, data: Dict[str, Any]) -> bool:
-        """Met à jour un indicateur dans DHIS2"""
         url = f"{self.base_url}/api/indicators/{indicator_id}"
         
         try:
-            response = self.session.put(url, json=data)
-            return response.status_code == 200
+            # Récupérer d'abord l'indicateur existant pour avoir toutes les données
+            response_get = self.session.get(f"{self.base_url}/api/indicators/{indicator_id}.json")
+            if response_get.status_code == 200:
+                existing_data = response_get.json()
+                # Mettre à jour seulement les champs nécessaires
+                existing_data['name'] = data['name']
+                existing_data['shortName'] = data['shortName']
+                
+                response_put = self.session.put(url, json=existing_data, timeout=30)
+                if response_put.status_code == 200:
+                    return True
+                else:
+                    print(f"Code d'erreur: {response_put.status_code}")
+                    print(f"Réponse: {response_put.text}")
+            return False
         except Exception as e:
-            print(f"Erreur lors de la mise à jour de l'indicateur {indicator_id}: {e}")
+            print(f"Erreur détaillée lors de la mise à jour de l'indicateur {indicator_id}: {e}")
             return False
     
     def update_program_indicator(self, program_indicator_id: str, data: Dict[str, Any]) -> bool:
-        """Met à jour un indicateur de programme dans DHIS2"""
         url = f"{self.base_url}/api/programIndicators/{program_indicator_id}"
         
         try:
-            response = self.session.put(url, json=data)
-            return response.status_code == 200
-        except Exception as e:
-            print(f"Erreur lors de la mise à jour de l'indicateur de programme {program_indicator_id}: {e}")
+            # Récupérer d'abord l'indicateur de programme existant
+            response_get = self.session.get(f"{self.base_url}/api/programIndicators/{program_indicator_id}.json")
+            if response_get.status_code == 200:
+                existing_data = response_get.json()
+                existing_data['name'] = data['name']
+                existing_data['shortName'] = data['shortName']
+                
+                response_put = self.session.put(url, json=existing_data, timeout=30)
+                if response_put.status_code == 200:
+                    return True
+                else:
+                    print(f"Code d'erreur: {response_put.status_code}")
+                    print(f"Réponse: {response_put.text}")
             return False
-    
-    def translate_and_update_indicators(self, dry_run: bool = True):
-        """Traduit et met à jour tous les indicateurs"""
-        print("Récupération des indicateurs...")
-        indicators = self.get_indicators()
-        print(f"Found {len(indicators)} indicators")
-        
-        for indicator in indicators:
-            original_name = indicator.get('name', '')
-            original_shortname = indicator.get('shortName', '')
-            
-            # Traduire le nom et le shortName
-            translated_name = self.translate_text(original_name)
-            translated_shortname = self.translate_text(original_shortname)
-            
-            print(f"\nIndicateur: {indicator['id']}")
-            print(f"Original: {original_name} / {original_shortname}")
-            print(f"Traduit: {translated_name} / {translated_shortname}")
-            
-            if not dry_run:
-                # Préparer les données de mise à jour
-                update_data = {
-                    'name': translated_name,
-                    'shortName': translated_shortname
-                }
+        except Exception as e:
+            print(f"Erreur détaillée lors de la mise à jour de l'indicateur de programme {program_indicator_id}: {e}")
+            return False
+
+    def check_user_permissions(self):
+        """Vérifie les permissions de l'utilisateur"""
+        try:
+            response = self.session.get(f"{self.base_url}/api/me.json?fields=id,name,userCredentials[userRoles[authorities]]")
+            if response.status_code == 200:
+                user_data = response.json()
+                print(f"Utilisateur: {user_data.get('name')}")
+                print(f"ID: {user_data.get('id')}")
                 
-                # Mettre à jour l'indicateur
-                success = self.update_indicator(indicator['id'], update_data)
-                if success:
-                    print("✓ Mise à jour réussie")
-                else:
-                    print("✗ Échec de la mise à jour")
-    
-    def translate_and_update_program_indicators(self, dry_run: bool = True):
-        """Traduit et met à jour tous les indicateurs de programme"""
-        print("Récupération des indicateurs de programme...")
-        program_indicators = self.get_program_indicators()
-        print(f"Found {len(program_indicators)} program indicators")
-        
-        for pi in program_indicators:
-            original_name = pi.get('name', '')
-            original_shortname = pi.get('shortName', '')
-            
-            # Traduire le nom et le shortName
-            translated_name = self.translate_text(original_name)
-            translated_shortname = self.translate_text(original_shortname)
-            
-            print(f"\nIndicateur de programme: {pi['id']}")
-            print(f"Original: {original_name} / {original_shortname}")
-            print(f"Traduit: {translated_name} / {translated_shortname}")
-            
-            if not dry_run:
-                # Préparer les données de mise à jour
-                update_data = {
-                    'name': translated_name,
-                    'shortName': translated_shortname
-                }
+                # Vérifier les autorisations
+                roles = user_data.get('userCredentials', {}).get('userRoles', [])
+                for role in roles:
+                    authorities = role.get('authorities', [])
+                    if 'ALL' in authorities or 'F_INDICATOR_PUBLIC_ADD' in authorities:
+                        print("✓ Permissions suffisantes détectées")
+                        return True
                 
-                # Mettre à jour l'indicateur de programme
-                success = self.update_program_indicator(pi['id'], update_data)
-                if success:
-                    print("✓ Mise à jour réussie")
-                else:
-                    print("✗ Échec de la mise à jour")
+                print("✗ Permissions insuffisantes. L'utilisateur doit avoir des droits d'écriture.")
+                return False
+        except Exception as e:
+            print(f"Erreur lors de la vérification des permissions: {e}")
+            return False
 
 def main():
     # Configuration
@@ -185,8 +147,15 @@ def main():
     
     print("Connexion à DHIS2 réussie!")
     
+    # Vérifier les permissions
+    if not translator.check_user_permissions():
+        print("Veuillez vérifier que l'utilisateur a les permissions nécessaires:")
+        print("- F_INDICATOR_PUBLIC_ADD pour les indicateurs")
+        print("- F_PROGRAM_INDICATOR_PUBLIC_ADD pour les indicateurs de programme")
+        return
+    
     # Mode dry-run (True pour tester sans modifier, False pour appliquer les changements)
-    DRY_RUN = True
+    DRY_RUN = False  # Passer à False pour appliquer les changements
     
     # Traduire les indicateurs
     print("\n" + "="*50)
